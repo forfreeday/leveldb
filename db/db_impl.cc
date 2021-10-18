@@ -516,6 +516,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   Status s;
   {
     mutex_.Unlock();
+    //1.将 memtable dump 到 SST 文件当中
     s = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta);
     mutex_.Lock();
   }
@@ -532,9 +533,11 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   if (s.ok() && meta.file_size > 0) {
     const Slice min_user_key = meta.smallest.user_key();
     const Slice max_user_key = meta.largest.user_key();
+    // 2.SST 应该写入哪个 level
     if (base != nullptr) {
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
     }
+    //3.生成 VersionEdit，也就是 MANIFEST 里记录的那个东西
     edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
                   meta.largest);
   }
@@ -554,6 +557,8 @@ void DBImpl::CompactMemTable() {
   VersionEdit edit;
   Version* base = versions_->current();
   base->Ref();
+  // 将文件写入到 level0 的 sstable，这里实际不一定在 level0
+  // 层级是逻辑上的层级，还需要进行判定
   Status s = WriteLevel0Table(imm_, &edit, base);
   base->Unref();
 
@@ -672,6 +677,7 @@ void DBImpl::MaybeScheduleCompaction() {
     // No work to be done
   } else {
     background_compaction_scheduled_ = true;
+    //线程池
     env_->Schedule(&DBImpl::BGWork, this);
   }
 }
@@ -699,10 +705,11 @@ void DBImpl::BackgroundCall() {
   background_work_finished_signal_.SignalAll();
 }
 
+// 线程池函数
 void DBImpl::BackgroundCompaction() {
   mutex_.AssertHeld();
-
-  if (imm_ != nullptr) {
+  //imm_ 是指 immtable memtable
+  if (imm_ != nullptr) {    //不为空就触发压缩
     CompactMemTable();
     return;
   }
@@ -723,6 +730,8 @@ void DBImpl::BackgroundCompaction() {
         (m->end ? m->end->DebugString().c_str() : "(end)"),
         (m->done ? "(end)" : manual_end.DebugString().c_str()));
   } else {
+    // 选出 level n 需要 Compaction 的文件
+    // 核心函数
     c = versions_->PickCompaction();
   }
 
@@ -1198,12 +1207,15 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
+  //构建一个写对象
   Writer w(&mutex_);
   w.batch = updates;
   w.sync = options.sync;
   w.done = false;
 
+  //写锁
   MutexLock l(&mutex_);
+  //加入写队列
   writers_.push_back(&w);
   while (!w.done && &w != writers_.front()) {
     w.cv.Wait();
@@ -1213,10 +1225,12 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   }
 
   // May temporarily unlock and wait.
+  // 开辟出空余空间来写入
   Status status = MakeRoomForWrite(updates == nullptr);
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
+
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
@@ -1227,8 +1241,11 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     // into mem_.
     {
       mutex_.Unlock();
+      //向 log 中添加一条记录
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
+      // sync=true，是否同步落盘，
+      // 如果sync=false，则可能造成数据丢
       if (status.ok() && options.sync) {
         status = logfile_->Sync();
         if (!status.ok()) {
@@ -1236,6 +1253,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
         }
       }
       if (status.ok()) {
+        //写入到内存 memtable 中
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }
       mutex_.Lock();

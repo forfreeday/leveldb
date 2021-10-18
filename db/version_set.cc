@@ -351,9 +351,11 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
       state->last_file_read = f;
       state->last_file_read_level = level;
 
-      state->s = state->vset->table_cache_->Get(*state->options, f->number,
+      // 有没有找到看这个
+      state->s = state->vset->table_cache_->Gewt(*state->options, f->number,
                                                 f->file_size, state->ikey,
                                                 &state->saver, SaveValue);
+      // null 是ok，反向逻辑
       if (!state->s.ok()) {
         state->found = true;
         return false;
@@ -400,6 +402,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
 }
 
 bool Version::UpdateStats(const GetStats& stats) {
+
   FileMetaData* f = stats.seek_file;
   if (f != nullptr) {
     f->allowed_seeks--;
@@ -470,6 +473,8 @@ bool Version::OverlapInLevel(int level, const Slice* smallest_user_key,
 int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
                                         const Slice& largest_user_key) {
   int level = 0;
+  //判断是否有重叠，有重叠 false
+  // &smallest_user_key 最小key, &largest_user_key 最大key
   if (!OverlapInLevel(0, &smallest_user_key, &largest_user_key)) {
     // Push to next level if there is no overlap in next level,
     // and the #bytes overlapping in the level after that are limited.
@@ -495,10 +500,12 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
 }
 
 // Store in "*inputs" all files in "level" that overlap [begin,end]
+// 查询当前 level 中，重叠的 key
 void Version::GetOverlappingInputs(int level, const InternalKey* begin,
                                    const InternalKey* end,
                                    std::vector<FileMetaData*>* inputs) {
   assert(level >= 0);
+  // config::kNumLevels = 7
   assert(level < config::kNumLevels);
   inputs->clear();
   Slice user_begin, user_end;
@@ -1256,6 +1263,7 @@ Compaction* VersionSet::PickCompaction() {
 
   // We prefer compactions triggered by too much data in a level over
   // the compactions triggered by seeks.
+  // 根据评分判断是否需要 size_compaction
   const bool size_compaction = (current_->compaction_score_ >= 1);
   const bool seek_compaction = (current_->file_to_compact_ != nullptr);
   if (size_compaction) {
@@ -1265,19 +1273,23 @@ Compaction* VersionSet::PickCompaction() {
     c = new Compaction(options_, level);
 
     // Pick the first file that comes after compact_pointer_[level]
+    // 从当前的 level 中挑选出需要 compaction 的文件
     for (size_t i = 0; i < current_->files_[level].size(); i++) {
       FileMetaData* f = current_->files_[level][i];
       if (compact_pointer_[level].empty() ||
+          // 找出 key 比 compact_pointer_[level] 大的key
+          // 这个compact_pointer_[level]指向当前level中上次被compaction的最大key的值
           icmp_.Compare(f->largest.Encode(), compact_pointer_[level]) > 0) {
         c->inputs_[0].push_back(f);
         break;
       }
     }
+    // 如果找不到这样的文件，从level头开始（round-robin)
     if (c->inputs_[0].empty()) {
       // Wrap-around to the beginning of the key space
       c->inputs_[0].push_back(current_->files_[level][0]);
     }
-  } else if (seek_compaction) {
+  } else if (seek_compaction) { // 触发 seek_compaction
     level = current_->file_to_compact_level_;
     c = new Compaction(options_, level);
     c->inputs_[0].push_back(current_->file_to_compact_);

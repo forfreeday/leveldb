@@ -146,21 +146,24 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
   assert(ok());
   Rep* r = rep_;
   Slice raw = block->Finish();
-
   Slice block_contents;
+  // 压缩类型
   CompressionType type = r->options.compression;
   // TODO(postrelease): Support more compression options: zlib?
   switch (type) {
     case kNoCompression:
       block_contents = raw;
       break;
-
+    // snappy 的类型
     case kSnappyCompression: {
       std::string* compressed = &r->compressed_output;
+      // 进行压缩
+      // 压缩后，压缩率高于12.5% 就表示压缩类型
       if (port::Snappy_Compress(raw.data(), raw.size(), compressed) &&
           compressed->size() < raw.size() - (raw.size() / 8u)) {
         block_contents = *compressed;
       } else {
+        // 压缩率没有达到 12.5%，并将type设置为不压缩
         // Snappy not supported, or compressed less than 12.5%, so just
         // store uncompressed form
         block_contents = raw;

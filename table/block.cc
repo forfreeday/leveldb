@@ -186,6 +186,7 @@ class Block::Iter : public Iterator {
 
     while (left < right) {
       uint32_t mid = (left + right + 1) / 2;
+      // 获取 RestartPoint
       uint32_t region_offset = GetRestartPoint(mid);
       uint32_t shared, non_shared, value_length;
       const char* key_ptr =
@@ -211,8 +212,10 @@ class Block::Iter : public Iterator {
     // This is true if we determined the key we desire is in the current block
     // and is after than the current key.
     assert(current_key_compare == 0 || Valid());
+    // 进行线性查找，定位一个restart组中的Entry
     bool skip_seek = left == restart_index_ && current_key_compare < 0;
     if (!skip_seek) {
+      //根据 entry 的格式，依次遍历ParseNextKey()，直到找到不小于key的Entry
       SeekToRestartPoint(left);
     }
     // Linear search (within restart block) for first key >= target

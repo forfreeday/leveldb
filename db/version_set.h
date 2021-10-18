@@ -316,12 +316,14 @@ class VersionSet {
 };
 
 // A Compaction encapsulates information about a compaction.
+// 封装了关于一个压缩的信息，像 leveln 的 sst 文件、VersionSet 都是在包含在这里
 class Compaction {
  public:
   ~Compaction();
 
   // Return the level that is being compacted.  Inputs from "level"
   // and "level+1" will be merged to produce a set of "level+1" files.
+  //
   int level() const { return level_; }
 
   // Return the object that holds the edits to the descriptor done
@@ -369,6 +371,7 @@ class Compaction {
   VersionEdit edit_;
 
   // Each compaction reads inputs from "level_" and "level_+1"
+  // 这是两组输入，每次压缩都从 level 和 level+1 读取
   std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
 
   // State used to check for number of overlapping grandparent files
